@@ -1,0 +1,190 @@
+<!doctype html>
+<html class="no-js" lang="">
+    <head>
+        <meta charset="utf-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+		
+        <title>TWSG</title>
+		
+		<style>
+			.dg.main.a {
+				margin-right: 0px;
+			}
+			#container {
+				width: 100%;
+				height: 100%;
+			}
+			
+			#plot { position: absolute; right: 10px; left: 0px; top: 175px; bottom: 10px; }
+
+		</style>
+    </head>
+    <body>
+
+		<h3>Turbulent Wind Speed Generator</h3>
+		
+		<div id="container">
+			<div id="plot"></div>
+		</div>
+
+		<script src="js/dygraph-combined-dev.js"></script>
+		<script src="js/datgui-0.6.4.js"></script>
+		
+		<script>
+			
+			var simulator, controllers, gui;
+
+			window.onload = function() {
+
+				var Simulation = function() {
+					this.windSpeed = 60;
+					this.turbulenceIntensity = 60;
+					this.lengthScale = 600;
+					this.samplingFrequency = 4;
+					this.timePeriod = 60;
+				};
+
+				gui = new dat.GUI( {width: 300} );
+				simulator = new Simulation();
+
+				controllers = {
+					'windSpeed': gui.add(simulator, 'windSpeed', 0, 100).listen(),
+					'turbulenceIntensity': gui.add(simulator, 'turbulenceIntensity', 0, 100).listen(),
+					'lengthScale': gui.add(simulator, 'lengthScale', { Low: 5, Medium: 100, High: 600 } ).listen(),
+					'samplingFrequency': gui.add(simulator, 'samplingFrequency', { Slow: 1, Medium: 4, Fast: 60 } ).listen(),
+					'timePeriod': gui.add(simulator, 'timePeriod', { Short: 5, Medium: 60, Long: 600 } ).listen()
+				};
+
+				updatePlot();
+
+				controllers.windSpeed.onChange(function(value) { updatePlot(); });
+				controllers.turbulenceIntensity.onChange(function(value) { updatePlot(); });
+				controllers.lengthScale.onChange(function(value) { 
+					simulator.lengthScale = Number(simulator.lengthScale);
+					updatePlot(); 
+				});
+				controllers.samplingFrequency.onChange(function(value) { 
+					simulator.samplingFrequency = Number(simulator.samplingFrequency);
+					simulator.timePeriod == 600 & simulator.samplingFrequency == 60 ? simulator.timePeriod = 60 : 0; 
+					updatePlot(); 
+				});
+				controllers.timePeriod.onChange(function(value) { 
+					simulator.timePeriod = Number(simulator.timePeriod);
+					simulator.timePeriod == 600 & simulator.samplingFrequency == 60 ? simulator.samplingFrequency = 4 : 0; 
+					updatePlot(); 
+				});
+
+			};
+
+			function updatePlot(){
+				calcData();
+				d_plot = initPlot();
+				plotData(d_plot);
+			}
+
+			function calcData(){
+
+				// Variance (sigma)
+				simulator.sigma = simulator.windSpeed * (simulator.turbulenceIntensity / 100);
+
+				// Frequency spacing [Hz]
+				simulator.del_f = 1 / simulator.timePeriod;
+				simulator.del_w = simulator.del_f * 2 * Math.PI;
+
+				// Number of samples 
+				simulator.Nf = simulator.timePeriod * simulator.samplingFrequency;
+
+				simulator.del_t = 1 / simulator.samplingFrequency;
+
+			}
+
+			function initPlot(){
+
+				// Init wind speed
+				var V = [];
+
+				// Time set [sec]
+				var t = [];
+
+				// Init plot
+				var data_plot = [];
+
+				for(var ii = 0; ii < simulator.timePeriod; ii += simulator.del_t){
+					var t_tmp = ii;
+					t.push(t_tmp);
+					
+					var V_tmp = simulator.windSpeed + generateTurbulence(t_tmp);
+					V.push(V_tmp);
+					
+					data_plot.push([t_tmp, V_tmp]);
+				}
+				
+				return data_plot;
+
+			}
+
+			function generateTurbulence(t){
+				
+				var turb = 0;
+				
+				// In, Sample index 
+				// f, Frequency set [Hz]
+				// Sw, power spectral density
+				var In = [];
+				var f = [];
+				var w = [];
+				var Sw = [];
+				var Ai = [];
+				var theta = [];
+
+				for (var ii = 1; ii <= simulator.Nf / 2; ii++) {
+				
+					// Sample index
+					var In_tmp = ii;
+					var In_tmp_1 = ii + 1;
+
+					// Frequency
+					var f_tmp = In_tmp * simulator.del_f;
+					var w_tmp = In_tmp * simulator.del_w;
+					var w_tmp_1 = In_tmp_1 * simulator.del_w;
+
+					// Power Spectrum of Wind (Kaimal, Two-sided)
+					var Sw_num = 0.475 * Math.pow(simulator.sigma,2) * (simulator.lengthScale/  simulator.windSpeed);
+					var Sw_den = Math.pow((1+Math.pow(((w_tmp * simulator.lengthScale) / simulator.windSpeed),2)),(5/6));
+					var Sw_den_1 = Math.pow((1+Math.pow(((w_tmp_1 * simulator.lengthScale) / simulator.windSpeed),2)),(5/6));
+
+					var Sw_tmp = Sw_num / Sw_den;
+					var Sw_tmp_1 = Sw_num / Sw_den_1;
+
+					var Ai_tmp = (2 / Math.PI) * Math.sqrt(1 / 2 * (Sw_tmp + Sw_tmp_1) * (w_tmp_1 - w_tmp));
+
+					var theta_tmp = (2 * Math.PI * Math.random()) + (-Math.PI);
+
+					turb += Ai_tmp * Math.cos(w_tmp * t + theta_tmp);
+				
+				}
+				
+				return turb;
+				
+			}
+
+			function plotData(data_plot){
+
+				var y_max = simulator.windSpeed * (1 + (simulator.turbulenceIntensity / 100 + 0.05));
+				var y_min = simulator.windSpeed * (1 - (simulator.turbulenceIntensity / 100 + 0.05));
+
+				new Dygraph(
+					document.getElementById("plot"), 
+					data_plot, 
+					{
+						labels: [ "t", "V"],
+						//valueRange: [y_min, y_max],
+						valueRange: [0.0, 210.0],
+					}
+				);
+			}
+			 
+		</script>
+
+    </body>
+</html>
